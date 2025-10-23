@@ -1,0 +1,76 @@
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.role == 'admin';
+    }
+    function isMentor() {
+      return isSignedIn() && (request.auth.token.role == 'mentor' || isAdmin());
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && (isOwner(uid) || isMentor());
+      allow create: if isSignedIn() && isOwner(uid);
+      allow update: if isSignedIn() && (isOwner(uid) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /modules/{moduleId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+      match /tasks/{taskId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+    }
+
+    match /signoffs/{signoffId} {
+      allow read: if isSignedIn() &&
+        (resource.data.userId == request.auth.uid || isMentor());
+      allow create: if isMentor() &&
+        request.resource.data.userId is string &&
+        request.resource.data.moduleId is string &&
+        request.resource.data.taskId is string &&
+        request.resource.data.result in ['pass','fail'] &&
+        request.resource.data.evaluatorId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /progress/{userId} {
+      allow read: if isOwner(userId) || isMentor();
+      allow write: if isAdmin();
+    }
+
+    match /driver_signoffs/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        request.auth.token.role in ['mentor','admin']
+      );
+      allow create: if isSignedIn() &&
+        request.auth.token.role in ['mentor','admin'] &&
+        request.resource.data.userId is string &&
+        request.resource.data.taskId is string &&
+        request.resource.data.result in ['pass','fail'] &&
+        request.resource.data.evaluatorId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+
+      match /admin/contacts/{contactId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+    }
+  }
+}
