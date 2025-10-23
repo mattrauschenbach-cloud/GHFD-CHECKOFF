@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { auth, googleLogin, logout } from "./lib/firebase";
 
-// Pages
 import DriverCheckoffs from "./pages/DriverCheckoffs.jsx";
 import DepartmentInfo from "./pages/DepartmentInfo.jsx";
 import AdminInfo from "./pages/AdminInfo.jsx";
@@ -15,9 +14,9 @@ export default function App() {
   useEffect(() => auth.onAuthStateChanged(setUser), []);
 
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif" }}>
+    <div className="app">
       <Header user={user} />
-      <div style={{ maxWidth: 1100, margin: "20px auto", padding: "0 16px" }}>
+      <main className="container main">
         {!user ? (
           <WelcomeSignedOut />
         ) : (
@@ -31,100 +30,100 @@ export default function App() {
             <Route path="/exports" element={<Exports />} />
           </Routes>
         )}
-      </div>
+      </main>
+      <Footer />
     </div>
   );
 }
 
 function Header({ user }) {
   async function handleLogin() {
-    try {
-      await googleLogin(); // uses popup; switch to redirect in firebase.js if needed
-    } catch (e) {
-      console.error(e);
-      alert(`Login failed: ${e.code || ""} ${e.message || e}`);
-    }
+    try { await googleLogin(); }
+    catch (e) { console.error(e); alert(`Login failed: ${e.code || ""} ${e.message || e}`); }
   }
-
   return (
-    <div style={{ borderBottom: "1px solid #eee", background: "#fff" }}>
-      <div
-        style={{
-          maxWidth: 1100,
-          margin: "0 auto",
-          padding: "12px 16px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
-        <Link
-          to="/"
-          style={{ fontWeight: 700, textDecoration: "none", color: "#111827" }}
-        >
-          Probation Tracker
+    <header className="header">
+      <div className="container header-inner">
+        <Link to="/" className="brand">
+          <div className="brand-badge">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style={{color:"#fff"}}>
+              <path d="M12 2s4 3 4 7a4 4 0 1 1-8 0c0-2 1-4 4-7Zm0 8c4 0 8 3 8 7a8 8 0 1 1-16 0c0-4 4-7 8-7Z"/>
+            </svg>
+          </div>
+          <div>
+            <div className="brand-title">Probation Tracker</div>
+            <div className="brand-sub">Firefighter Checkoffs & Progress</div>
+          </div>
         </Link>
 
-        <nav style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <Tab to="/driver" label="Driver Check-Offs" />
-          <Tab to="/department" label="Department Info" />
-          <Tab to="/admin" label="Admin Info" />
-          <Tab to="/classroom" label="Classroom" />
-          <Tab to="/admin-editor" label="Admin Editor" />
-          <Tab to="/exports" label="Exports" />
+        <nav className="nav">
+          <Tab to="/driver">Driver Check-Offs</Tab>
+          <Tab to="/department">Department Info</Tab>
+          <Tab to="/admin">Admin Info</Tab>
+          <Tab to="/classroom">Classroom</Tab>
+          <Tab to="/admin-editor">Admin Editor</Tab>
+          <Tab to="/exports">Exports</Tab>
         </nav>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ fontSize: 13, color: "#6b7280", minWidth: 160, textAlign: "right" }}>
-            {user ? user.displayName || user.email : "Not signed in"}
-          </div>
+        <div className="userbox">
+          <div className="userid">{user ? (user.displayName || user.email) : "Not signed in"}</div>
           {!user ? (
-            <button onClick={handleLogin}>Sign in with Google</button>
+            <button className="btn btn-primary" onClick={handleLogin}>Sign in with Google</button>
           ) : (
-            <button onClick={logout}>Sign out</button>
+            <button className="btn btn-outline" onClick={logout}>Sign out</button>
           )}
         </div>
       </div>
-    </div>
+    </header>
   );
 }
 
-function Tab({ to, label }) {
+function Tab({ to, children }) {
   return (
     <NavLink
       to={to}
-      style={({ isActive }) => ({
-        textDecoration: "none",
-        padding: "6px 10px",
-        borderRadius: 8,
-        color: isActive ? "#111827" : "#374151",
-        background: isActive ? "#f3f4f6" : "transparent",
-      })}
+      className={({ isActive }) => "tab" + (isActive ? " active" : "")}
     >
-      {label}
+      {children}
     </NavLink>
   );
 }
 
 function Welcome() {
   return (
-    <div style={{ padding: "12px 0" }}>
-      <h1 style={{ margin: "8px 0 4px" }}>Welcome</h1>
-      <p style={{ color: "#6b7280" }}>
-        Use the tabs above to access driver check-offs, department info, admin info, and your classroom.
-      </p>
+    <div className="grid">
+      <div className="card pad">
+        <h1 style={{margin:"0 0 6px"}}>Welcome</h1>
+        <p style={{color:"var(--muted)"}}>
+          Use the tabs above to access driver check-offs, department info, admin info, and your classroom.
+        </p>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))"}}>
+        <div className="card kpi"><div className="label">Month</div><div className="val">— / 24</div></div>
+        <div className="card kpi"><div className="label">Progress</div><div className="val">—%</div></div>
+        <div className="card kpi"><div className="label">Overdue</div><div className="val">0</div></div>
+        <div className="card kpi"><div className="label">Pending</div><div className="val">0</div></div>
+      </div>
     </div>
   );
 }
 
 function WelcomeSignedOut() {
   return (
-    <div style={{ padding: "12px 0" }}>
-      <h1 style={{ margin: "8px 0 4px" }}>Welcome</h1>
-      <p style={{ color: "#6b7280" }}>
-        Please sign in with Google (top-right) to access the app.
-      </p>
+    <div className="card pad" style={{textAlign:"center"}}>
+      <h1 style={{margin:"0 0 6px"}}>Welcome</h1>
+      <p style={{color:"var(--muted)"}}>Please sign in with Google (top-right) to access the app.</p>
     </div>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="footer">
+      <div className="container footer-inner">
+        © {new Date().getFullYear()} Probation Tracker • Built for firefighter training
+      </div>
+    </footer>
   );
 }
