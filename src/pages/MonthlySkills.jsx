@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { auth } from "../lib/firebase";
 import {
   addSkillToMonth,
   isOwner,
   listMonthlySignoffs,
   loadMonthlyCatalog,
   recordMonthlySignoff,
-  removeSkillFromMonth
+  removeSkillFromMonth,
+  updateSkillInMonth,
+  moveSkillInMonth
 } from "../lib/monthly";
 
 const MONTHS = ["1","2","3","4","5","6"];
@@ -22,7 +23,6 @@ export default function MonthlySkills({ user }) {
   const [owner, setOwner] = useState(false);
   const [mode, setMode] = useState("evaluate"); // "evaluate" | "manage"
 
-  // Load catalog + owner flag once
   useEffect(() => {
     (async () => {
       setCatalog(await loadMonthlyCatalog());
@@ -30,7 +30,6 @@ export default function MonthlySkills({ user }) {
     })();
   }, [user]);
 
-  // Load recent signoffs when month or prob changes
   useEffect(() => {
     (async () => {
       if (!probEmail) { setRecent([]); return; }
@@ -64,19 +63,14 @@ export default function MonthlySkills({ user }) {
       <div className="card pad">
         <h1 style={{marginTop:0}}>Monthly Skills</h1>
 
-        {/* Mode switch (owners see the Manage tab) */}
         <div style={{display:"flex", gap:8, margin:"6px 0 12px"}}>
           <button className="tab-chip" aria-selected={mode==="evaluate"} onClick={()=>setMode("evaluate")}>Evaluate</button>
           {owner && <button className="tab-chip" aria-selected={mode==="manage"} onClick={()=>setMode("manage")}>Manage (Owner)</button>}
         </div>
 
-        {/* Month chooser */}
         <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
           {MONTHS.map(m => (
-            <button key={m}
-              className="tab-chip"
-              aria-selected={month===m}
-              onClick={()=>setMonth(m)}>
+            <button key={m} className="tab-chip" aria-selected={month===m} onClick={()=>setMonth(m)}>
               {LABEL[m]}
             </button>
           ))}
@@ -104,7 +98,6 @@ export default function MonthlySkills({ user }) {
         )}
       </div>
 
-      {/* Right column */}
       <div className="card pad">
         {mode === "evaluate" ? (
           <>
@@ -117,15 +110,17 @@ export default function MonthlySkills({ user }) {
             />
             {!skills.length && <div className="small" style={{marginTop:8}}>No skills configured for this month yet.</div>}
           </>
+        ) : owner ? (
+          <>
+            <h2 style={{marginTop:0}}>{LABEL[month]} — Manage Skills</h2>
+            <ManageTable
+              month={month}
+              skills={skills}
+              setCatalog={setCatalog}
+            />
+          </>
         ) : (
-          owner ? (
-            <>
-              <h2 style={{marginTop:0}}>{LABEL[month]} — Manage Skills</h2>
-              <ManageTable month={month} skills={skills} setCatalog={setCatalog} />
-            </>
-          ) : (
-            <div className="small">Only owners can manage the catalog.</div>
-          )
+          <div className="small">Only owners can manage the catalog.</div>
         )}
       </div>
     </div>
@@ -186,7 +181,7 @@ function RecentList({ items }) {
   );
 }
 
-/* ---------- Manage (Owner) components ---------- */
+/* ---------- Manage (Owner) ---------- */
 function Manager({ month, skills, setCatalog }) {
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
@@ -197,7 +192,6 @@ function Manager({ month, skills, setCatalog }) {
     if (!t) { alert("Enter a skill title."); return; }
     const id = makeId(t);
     await addSkillToMonth(month, { id, title: t, details: d });
-    // refresh local state (cheap way: reload whole catalog)
     setCatalog(await loadMonthlyCatalog());
     setTitle(""); setDetails("");
   }
@@ -209,15 +203,41 @@ function Manager({ month, skills, setCatalog }) {
         <input className="input" placeholder="Details (optional)" value={details} onChange={e=>setDetails(e.target.value)} />
         <button className="btn" style={{background:"var(--brand)", color:"#fff"}} onClick={addSkill}>Add</button>
       </div>
-      <div className="small" style={{marginTop:6}}>Tip: IDs are auto-made from the title. Keep titles unique per month.</div>
+      <div className="small" style={{marginTop:6}}>Tip: IDs come from the title. Keep titles unique per month.</div>
     </div>
   );
 }
 
 function ManageTable({ month, skills, setCatalog }) {
+  const [editId, setEditId] = useState(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDetails, setEditDetails] = useState("");
+
+  function startEdit(s) {
+    setEditId(s.id);
+    setEditTitle(s.title || "");
+    setEditDetails(s.details || "");
+  }
+  function cancel() {
+    setEditId(null);
+    setEditTitle("");
+    setEditDetails("");
+  }
+
+  async function save() {
+    await updateSkillInMonth(month, editId, { title: editTitle.trim(), details: editDetails.trim() });
+    setCatalog(await loadMonthlyCatalog());
+    cancel();
+  }
+
   async function remove(id) {
     if (!confirm("Remove this skill from the month?")) return;
     await removeSkillFromMonth(month, id);
+    setCatalog(await loadMonthlyCatalog());
+  }
+
+  async function move(id, delta) {
+    await moveSkillInMonth(month, id, delta);
     setCatalog(await loadMonthlyCatalog());
   }
 
@@ -225,19 +245,57 @@ function ManageTable({ month, skills, setCatalog }) {
     <div className="table-wrap" style={{marginTop:8}}>
       <table>
         <thead>
-          <tr><th>Skill</th><th>Details</th><th style={{width:120}}></th></tr>
+          <tr>
+            <th style={{width:44}}></th>
+            <th>Skill</th>
+            <th>Details</th>
+            <th style={{width:220, textAlign:"right"}}></th>
+          </tr>
         </thead>
         <tbody>
-          {skills.map(s => (
-            <tr key={s.id}>
-              <td style={{fontWeight:700}}>{s.title}</td>
-              <td style={{color:"var(--muted)"}}>{s.details || "—"}</td>
-              <td style={{textAlign:"right"}}>
-                <button className="btn" style={{border:"1px solid var(--border)"}} onClick={()=>remove(s.id)}>Remove</button>
-              </td>
-            </tr>
-          ))}
-          {!skills.length && <tr><td colSpan={3} style={{padding:16, color:"var(--muted)"}}>No skills yet — add some above.</td></tr>}
+          {skills.map((s, i) => {
+            const editing = editId === s.id;
+            return (
+              <tr key={s.id}>
+                <td>
+                  <div style={{display:"flex", gap:6}}>
+                    <button className="btn" style={{border:"1px solid var(--border)"}} onClick={()=>move(s.id, -1)} disabled={i===0}>↑</button>
+                    <button className="btn" style={{border:"1px solid var(--border)"}} onClick={()=>move(s.id, +1)} disabled={i===skills.length-1}>↓</button>
+                  </div>
+                </td>
+                <td>
+                  {editing ? (
+                    <input className="input" value={editTitle} onChange={e=>setEditTitle(e.target.value)} />
+                  ) : (
+                    <strong>{s.title}</strong>
+                  )}
+                </td>
+                <td>
+                  {editing ? (
+                    <input className="input" value={editDetails} onChange={e=>setEditDetails(e.target.value)} />
+                  ) : (
+                    <span style={{color:"var(--muted)"}}>{s.details || "—"}</span>
+                  )}
+                </td>
+                <td style={{textAlign:"right"}}>
+                  {!editing ? (
+                    <>
+                      <button className="btn" style={{border:"1px solid var(--border)", marginRight:6}} onClick={()=>startEdit(s)}>Edit</button>
+                      <button className="btn" style={{border:"1px solid var(--border)"}} onClick={()=>remove(s.id)}>Remove</button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn" style={{background:"var(--brand)", color:"#fff", marginRight:6}} onClick={save}>Save</button>
+                      <button className="btn" style={{border:"1px solid var(--border)"}} onClick={cancel}>Cancel</button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+          {!skills.length && (
+            <tr><td colSpan={4} style={{padding:16, color:"var(--muted)"}}>No skills yet — add some above.</td></tr>
+          )}
         </tbody>
       </table>
     </div>
