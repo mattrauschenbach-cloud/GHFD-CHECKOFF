@@ -1,202 +1,250 @@
-import { useMemo, useState, useEffect } from "react";
-import { db } from "../lib/firebase";
+import { useEffect, useMemo, useState } from "react";
+import { auth } from "../lib/firebase";
 import {
-  addDoc,
-  collection,
-  query,
-  where,
-  orderBy,
-  getDocs,
-  serverTimestamp,
-} from "firebase/firestore";
+  addSkillToMonth,
+  isOwner,
+  listMonthlySignoffs,
+  loadMonthlyCatalog,
+  recordMonthlySignoff,
+  removeSkillFromMonth
+} from "../lib/monthly";
 
-/**
- * Simple starter for monthly skills:
- * - Choose month & probationer (email text input for now)
- * - Quick list of skills (local array) with Pass/Fail + notes
- * - Writes to Firestore: collection "monthly_skills_signoffs"
- *
- * You can later:
- * - Replace the email text box with a select fed by /users like Driver page
- * - Move SKILLS to Firestore config (config/monthly_skills.items)
- */
-
-const SKILLS = [
-  { id: "scba_don",       title: "SCBA Donning",         details: "Don and seal within time standard" },
-  { id: "scba_doff",      title: "SCBA Doffing",         details: "Doff safely and stow properly" },
-  { id: "mask_up",        title: "Mask Up (Blackout)",   details: "Mask up with limited visibility" },
-  { id: "ladders_raise",  title: "Ladders – Raise",      details: "Single-/two-firefighter raises" },
-  { id: "rit_search",     title: "RIT/Search",           details: "Grid/Oriented search, victim locate" },
-  { id: "self_rescue",    title: "Self-Rescue/Mayday",   details: "Window bail, ladder bail, radio call" },
-  { id: "engine_ops",     title: "Engine Ops",           details: "Stretch, charge, nozzle control" },
-  { id: "extrication",    title: "Extrication Basics",   details: "Stabilize, crib, tool safety" },
-];
-
-const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December"
-];
+const MONTHS = ["1","2","3","4","5","6"];
+const LABEL = { "1":"Month 1","2":"Month 2","3":"Month 3","4":"Month 4","5":"Month 5","6":"Month 6" };
 
 export default function MonthlySkills({ user }) {
-  const today = new Date();
-  const [month, setMonth] = useState(today.getMonth()); // 0-11
-  const [year, setYear]   = useState(today.getFullYear());
-  const [probEmail, setProbEmail] = useState(""); // quick input for now
+  const [month, setMonth] = useState("1");
+  const [catalog, setCatalog] = useState({ "1":[], "2":[], "3":[], "4":[], "5":[], "6":[] });
+  const [probEmail, setProbEmail] = useState("");
   const [notes, setNotes] = useState("");
-  const [busyId, setBusyId] = useState(null);
-
-  // Load existing signoffs for the chosen month/probationer (display small history)
+  const [busy, setBusy] = useState("");
   const [recent, setRecent] = useState([]);
+  const [owner, setOwner] = useState(false);
+  const [mode, setMode] = useState("evaluate"); // "evaluate" | "manage"
 
-  const monthKey = useMemo(() => `${year}-${String(month+1).padStart(2,"0")}`, [month, year]);
+  // Load catalog + owner flag once
+  useEffect(() => {
+    (async () => {
+      setCatalog(await loadMonthlyCatalog());
+      setOwner(await isOwner(user));
+    })();
+  }, [user]);
 
-  useEffect(() => { (async () => {
-    if (!probEmail) { setRecent([]); return; }
-    // Pull this month’s entries for that probationer
-    const start = new Date(year, month, 1, 0,0,0);
-    const end   = new Date(year, month+1, 0, 23,59,59);
-    const q = query(
-      collection(db, "monthly_skills_signoffs"),
-      where("probationerEmail", "==", probEmail),
-      where("createdAt", ">=", start),
-      where("createdAt", "<=", end),
-      orderBy("createdAt", "desc")
-    );
-    const snap = await getDocs(q);
-    setRecent(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-  })(); }, [probEmail, monthKey]);
+  // Load recent signoffs when month or prob changes
+  useEffect(() => {
+    (async () => {
+      if (!probEmail) { setRecent([]); return; }
+      setRecent(await listMonthlySignoffs(probEmail, month));
+    })();
+  }, [probEmail, month]);
 
-  async function record(skillId, result) {
-    if (!probEmail) { alert("Enter the probationer’s email first."); return; }
-    setBusyId(`${skillId}-${result}`);
+  const skills = useMemo(() => catalog[month] || [], [catalog, month]);
+
+  async function doRecord(skillId, result) {
+    if (!probEmail) { alert("Enter the probationer’s email."); return; }
+    setBusy(`${skillId}-${result}`);
     try {
-      await addDoc(collection(db, "monthly_skills_signoffs"), {
-        monthKey,              // e.g. "2025-10"
-        year,
-        month,                 // 0-11
-        probationerEmail: probEmail.trim(),
-        evaluatorUid: user?.uid || "",
-        evaluatorEmail: user?.email || "",
+      await recordMonthlySignoff({
+        probationerEmail: probEmail,
+        month: Number(month),
         skillId,
-        result,                // "pass" | "fail"
-        notes: notes || "",
-        createdAt: serverTimestamp(),
+        result,
+        notes,
+        evaluator: user
       });
       setNotes("");
-      // refresh list
-      const start = new Date(year, month, 1, 0,0,0);
-      const end   = new Date(year, month+1, 0, 23,59,59);
-      const q2 = query(
-        collection(db, "monthly_skills_signoffs"),
-        where("probationerEmail", "==", probEmail.trim()),
-        where("createdAt", ">=", start),
-        where("createdAt", "<=", end),
-        orderBy("createdAt", "desc")
-      );
-      const snap2 = await getDocs(q2);
-      setRecent(snap2.docs.map(d => ({ id: d.id, ...d.data() })));
+      setRecent(await listMonthlySignoffs(probEmail, month));
     } finally {
-      setBusyId(null);
+      setBusy("");
     }
   }
 
   return (
     <div className="grid grid-2">
-      {/* Left controls */}
       <div className="card pad">
-        <h1 style={{marginTop:0}}>Monthly Skills Checkoff</h1>
+        <h1 style={{marginTop:0}}>Monthly Skills</h1>
 
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:8}}>
-          <div>
-            <label style={{fontSize:13, color:"var(--muted)"}}>Month</label>
-            <select value={month} onChange={e=>setMonth(Number(e.target.value))} className="input" style={{width:"100%"}}>
-              {MONTHS.map((m,i)=>(<option key={m} value={i}>{m}</option>))}
-            </select>
-          </div>
-          <div>
-            <label style={{fontSize:13, color:"var(--muted)"}}>Year</label>
-            <input className="input" type="number" value={year} onChange={e=>setYear(Number(e.target.value))} />
-          </div>
+        {/* Mode switch (owners see the Manage tab) */}
+        <div style={{display:"flex", gap:8, margin:"6px 0 12px"}}>
+          <button className="tab-chip" aria-selected={mode==="evaluate"} onClick={()=>setMode("evaluate")}>Evaluate</button>
+          {owner && <button className="tab-chip" aria-selected={mode==="manage"} onClick={()=>setMode("manage")}>Manage (Owner)</button>}
         </div>
 
-        <div style={{marginTop:10}}>
-          <label style={{fontSize:13, color:"var(--muted)"}}>Probationer Email</label>
-          <input
-            className="input"
-            placeholder="probationer@dept.org"
-            value={probEmail}
-            onChange={e=>setProbEmail(e.target.value)}
-            style={{width:"100%"}}
-          />
+        {/* Month chooser */}
+        <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+          {MONTHS.map(m => (
+            <button key={m}
+              className="tab-chip"
+              aria-selected={month===m}
+              onClick={()=>setMonth(m)}>
+              {LABEL[m]}
+            </button>
+          ))}
         </div>
 
-        <div style={{marginTop:10}}>
-          <label style={{fontSize:13, color:"var(--muted)"}}>Notes (optional)</label>
-          <textarea className="input" rows={2} value={notes} onChange={e=>setNotes(e.target.value)} style={{width:"100%"}} />
-        </div>
-
-        <div className="card pad" style={{marginTop:12}}>
-          <strong>Recent entries</strong>
-          <ul style={{listStyle:"none", padding:0, margin:"8px 0 0", maxHeight:220, overflow:"auto"}}>
-            {recent.map(r=>(
-              <li key={r.id} style={{padding:"6px 0", borderBottom:"1px solid var(--border)"}}>
-                <span className={r.result==="pass" ? "badge badge-ok" : "badge badge-bad"}>{r.result}</span>{" "}
-                <code style={{background:"#f3f4f6", padding:"2px 6px", borderRadius:6}}>{r.skillId}</code>{" "}
-                • {r.notes || "—"}
-              </li>
-            ))}
-            {!recent.length && <li style={{color:"var(--muted)"}}>No entries for this month.</li>}
-          </ul>
-        </div>
+        {mode === "evaluate" ? (
+          <>
+            <div style={{marginTop:12}}>
+              <label style={{fontSize:13, color:"var(--muted)"}}>Probationer Email</label>
+              <input
+                className="input" style={{width:"100%"}}
+                placeholder="probationer@dept.org"
+                value={probEmail}
+                onChange={e=>setProbEmail(e.target.value)}
+              />
+            </div>
+            <div style={{marginTop:8}}>
+              <label style={{fontSize:13, color:"var(--muted)"}}>Notes (optional)</label>
+              <textarea className="input" rows={2} value={notes} onChange={e=>setNotes(e.target.value)} style={{width:"100%"}} />
+            </div>
+            <RecentList items={recent} />
+          </>
+        ) : (
+          owner && <Manager month={month} skills={skills} setCatalog={setCatalog} />
+        )}
       </div>
 
-      {/* Right skills list */}
+      {/* Right column */}
       <div className="card pad">
-        <h2 style={{marginTop:0}}>Skills for {MONTHS[month]} {year}</h2>
-        <div className="table-wrap" style={{marginTop:8}}>
-          <table>
-            <thead>
-              <tr>
-                <th>Skill</th>
-                <th>Details</th>
-                <th style={{width:200, textAlign:"right"}}>Record</th>
-              </tr>
-            </thead>
-            <tbody>
-              {SKILLS.map(s => (
-                <tr key={s.id}>
-                  <td style={{fontWeight:700}}>{s.title}</td>
-                  <td style={{color:"var(--muted)"}}>{s.details}</td>
-                  <td style={{textAlign:"right"}}>
-                    <button
-                      className="btn"
-                      style={{background:"var(--brand)", color:"#fff", marginRight:6}}
-                      disabled={!!busyId}
-                      onClick={()=>record(s.id, "pass")}
-                    >
-                      {busyId===`${s.id}-pass` ? "Saving…" : "Pass"}
-                    </button>
-                    <button
-                      className="btn"
-                      style={{border:"1px solid var(--border)"}}
-                      disabled={!!busyId}
-                      onClick={()=>record(s.id, "fail")}
-                    >
-                      {busyId===`${s.id}-fail` ? "Saving…" : "Fail"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {!SKILLS.length && (
-                <tr><td colSpan={3} style={{padding:16, color:"var(--muted)"}}>No skills configured.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div style={{color:"var(--muted)", fontSize:13, marginTop:8}}>
-          Tip: we can load this list from Firestore later (e.g., <code>config/monthly_skills</code>) so you can edit it in Admin Editor.
-        </div>
+        {mode === "evaluate" ? (
+          <>
+            <h2 style={{marginTop:0}}>{LABEL[month]} — Evaluate</h2>
+            <SkillsTable
+              skills={skills}
+              busy={busy}
+              onPass={(id)=>doRecord(id,"pass")}
+              onFail={(id)=>doRecord(id,"fail")}
+            />
+            {!skills.length && <div className="small" style={{marginTop:8}}>No skills configured for this month yet.</div>}
+          </>
+        ) : (
+          owner ? (
+            <>
+              <h2 style={{marginTop:0}}>{LABEL[month]} — Manage Skills</h2>
+              <ManageTable month={month} skills={skills} setCatalog={setCatalog} />
+            </>
+          ) : (
+            <div className="small">Only owners can manage the catalog.</div>
+          )
+        )}
       </div>
     </div>
   );
+}
+
+/* ---------- Evaluate components ---------- */
+function SkillsTable({ skills, busy, onPass, onFail }) {
+  return (
+    <div className="table-wrap" style={{marginTop:8}}>
+      <table>
+        <thead>
+          <tr>
+            <th>Skill</th>
+            <th>Details</th>
+            <th style={{width:200, textAlign:"right"}}>Record</th>
+          </tr>
+        </thead>
+        <tbody>
+          {skills.map(s => (
+            <tr key={s.id}>
+              <td style={{fontWeight:700}}>{s.title}</td>
+              <td style={{color:"var(--muted)"}}>{s.details || "—"}</td>
+              <td style={{textAlign:"right"}}>
+                <button className="btn" style={{background:"var(--brand)", color:"#fff", marginRight:6}}
+                        disabled={!!busy} onClick={()=>onPass(s.id)}>
+                  {busy===`${s.id}-pass` ? "Saving…" : "Pass"}
+                </button>
+                <button className="btn" style={{border:"1px solid var(--border)"}}
+                        disabled={!!busy} onClick={()=>onFail(s.id)}>
+                  {busy===`${s.id}-fail` ? "Saving…" : "Fail"}
+                </button>
+              </td>
+            </tr>
+          ))}
+          {!skills.length && <tr><td colSpan={3} style={{padding:16}}></td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RecentList({ items }) {
+  return (
+    <div className="card pad" style={{marginTop:12}}>
+      <strong>Recent entries</strong>
+      <ul style={{listStyle:"none", padding:0, margin:"8px 0 0", maxHeight:220, overflow:"auto"}}>
+        {items.map(r=>(
+          <li key={r.id} style={{padding:"6px 0", borderBottom:"1px solid var(--border)"}}>
+            <span className={r.result==="pass" ? "badge badge-ok" : "badge badge-bad"}>{r.result}</span>{" "}
+            <code className="codepill">{r.skillId}</code>{" "}
+            • {r.notes || "—"}
+          </li>
+        ))}
+        {!items.length && <li style={{color:"var(--muted)"}}>No entries for this month.</li>}
+      </ul>
+    </div>
+  );
+}
+
+/* ---------- Manage (Owner) components ---------- */
+function Manager({ month, skills, setCatalog }) {
+  const [title, setTitle] = useState("");
+  const [details, setDetails] = useState("");
+
+  async function addSkill() {
+    const t = title.trim();
+    const d = details.trim();
+    if (!t) { alert("Enter a skill title."); return; }
+    const id = makeId(t);
+    await addSkillToMonth(month, { id, title: t, details: d });
+    // refresh local state (cheap way: reload whole catalog)
+    setCatalog(await loadMonthlyCatalog());
+    setTitle(""); setDetails("");
+  }
+
+  return (
+    <div className="card pad" style={{marginTop:12}}>
+      <div style={{display:"grid", gridTemplateColumns:"1fr 2fr auto", gap:8}}>
+        <input className="input" placeholder="Skill title" value={title} onChange={e=>setTitle(e.target.value)} />
+        <input className="input" placeholder="Details (optional)" value={details} onChange={e=>setDetails(e.target.value)} />
+        <button className="btn" style={{background:"var(--brand)", color:"#fff"}} onClick={addSkill}>Add</button>
+      </div>
+      <div className="small" style={{marginTop:6}}>Tip: IDs are auto-made from the title. Keep titles unique per month.</div>
+    </div>
+  );
+}
+
+function ManageTable({ month, skills, setCatalog }) {
+  async function remove(id) {
+    if (!confirm("Remove this skill from the month?")) return;
+    await removeSkillFromMonth(month, id);
+    setCatalog(await loadMonthlyCatalog());
+  }
+
+  return (
+    <div className="table-wrap" style={{marginTop:8}}>
+      <table>
+        <thead>
+          <tr><th>Skill</th><th>Details</th><th style={{width:120}}></th></tr>
+        </thead>
+        <tbody>
+          {skills.map(s => (
+            <tr key={s.id}>
+              <td style={{fontWeight:700}}>{s.title}</td>
+              <td style={{color:"var(--muted)"}}>{s.details || "—"}</td>
+              <td style={{textAlign:"right"}}>
+                <button className="btn" style={{border:"1px solid var(--border)"}} onClick={()=>remove(s.id)}>Remove</button>
+              </td>
+            </tr>
+          ))}
+          {!skills.length && <tr><td colSpan={3} style={{padding:16, color:"var(--muted)"}}>No skills yet — add some above.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ---------- utils ---------- */
+function makeId(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 40);
 }
