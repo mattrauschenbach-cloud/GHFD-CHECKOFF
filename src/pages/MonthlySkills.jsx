@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   addSkillToMonth,
-  isOwner,
   listMonthlySignoffs,
   loadMonthlyCatalog,
   recordMonthlySignoff,
@@ -20,15 +19,13 @@ export default function MonthlySkills({ user }) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState("");
   const [recent, setRecent] = useState([]);
-  const [owner, setOwner] = useState(false);
-  const [mode, setMode] = useState("evaluate"); // "evaluate" | "manage"
+
+  // ALWAYS show Manage; no owner check
+  const [mode, setMode] = useState("manage"); // "manage" | "evaluate"
 
   useEffect(() => {
-    (async () => {
-      setCatalog(await loadMonthlyCatalog());
-      setOwner(await isOwner(user));
-    })();
-  }, [user]);
+    (async () => setCatalog(await loadMonthlyCatalog()))();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -60,14 +57,17 @@ export default function MonthlySkills({ user }) {
 
   return (
     <div className="grid grid-2">
+      {/* LEFT: Controls + Manage form (ALWAYS visible) */}
       <div className="card pad">
         <h1 style={{marginTop:0}}>Monthly Skills</h1>
 
+        {/* Mode switch */}
         <div style={{display:"flex", gap:8, margin:"6px 0 12px"}}>
+          <button className="tab-chip" aria-selected={mode==="manage"} onClick={()=>setMode("manage")}>Manage</button>
           <button className="tab-chip" aria-selected={mode==="evaluate"} onClick={()=>setMode("evaluate")}>Evaluate</button>
-          {owner && <button className="tab-chip" aria-selected={mode==="manage"} onClick={()=>setMode("manage")}>Manage (Owner)</button>}
         </div>
 
+        {/* Month chooser */}
         <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
           {MONTHS.map(m => (
             <button key={m} className="tab-chip" aria-selected={month===m} onClick={()=>setMonth(m)}>
@@ -94,10 +94,11 @@ export default function MonthlySkills({ user }) {
             <RecentList items={recent} />
           </>
         ) : (
-          owner && <Manager month={month} skills={skills} setCatalog={setCatalog} />
+          <Manager month={month} setCatalog={setCatalog} skills={skills} />
         )}
       </div>
 
+      {/* RIGHT: Table */}
       <div className="card pad">
         {mode === "evaluate" ? (
           <>
@@ -110,7 +111,7 @@ export default function MonthlySkills({ user }) {
             />
             {!skills.length && <div className="small" style={{marginTop:8}}>No skills configured for this month yet.</div>}
           </>
-        ) : owner ? (
+        ) : (
           <>
             <h2 style={{marginTop:0}}>{LABEL[month]} — Manage Skills</h2>
             <ManageTable
@@ -119,15 +120,13 @@ export default function MonthlySkills({ user }) {
               setCatalog={setCatalog}
             />
           </>
-        ) : (
-          <div className="small">Only owners can manage the catalog.</div>
         )}
       </div>
     </div>
   );
 }
 
-/* ---------- Evaluate components ---------- */
+/* ---------- Evaluate ---------- */
 function SkillsTable({ skills, busy, onPass, onFail }) {
   return (
     <div className="table-wrap" style={{marginTop:8}}>
@@ -181,8 +180,8 @@ function RecentList({ items }) {
   );
 }
 
-/* ---------- Manage (Owner) ---------- */
-function Manager({ month, skills, setCatalog }) {
+/* ---------- Manage (always visible now) ---------- */
+function Manager({ month, setCatalog, skills }) {
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
 
@@ -203,7 +202,9 @@ function Manager({ month, skills, setCatalog }) {
         <input className="input" placeholder="Details (optional)" value={details} onChange={e=>setDetails(e.target.value)} />
         <button className="btn" style={{background:"var(--brand)", color:"#fff"}} onClick={addSkill}>Add</button>
       </div>
-      <div className="small" style={{marginTop:6}}>Tip: IDs come from the title. Keep titles unique per month.</div>
+      <div className="small" style={{marginTop:6}}>
+        Click <strong>Add</strong> to create a skill under {LABEL[month]}. Use the table on the right to edit, reorder, or remove.
+      </div>
     </div>
   );
 }
@@ -294,7 +295,7 @@ function ManageTable({ month, skills, setCatalog }) {
             );
           })}
           {!skills.length && (
-            <tr><td colSpan={4} style={{padding:16, color:"var(--muted)"}}>No skills yet — add some above.</td></tr>
+            <tr><td colSpan={4} style={{padding:16, color:"var(--muted)"}}>No skills yet — add some on the left.</td></tr>
           )}
         </tbody>
       </table>
